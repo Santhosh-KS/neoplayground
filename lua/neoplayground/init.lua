@@ -88,29 +88,63 @@ function M.update_output(buf)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	local content = table.concat(lines, "\n")
 
-	-- Execute the code and capture output
+	-- Create a modified version of the code that captures all values
+	local modified_content = [[
+        local _playground_output = {}
+        local _playground_line = 0
+    ]]
+
+	-- Process each line
+	for i, line in ipairs(lines) do
+		-- Check if line is an assignment
+		local var_name = line:match("^%s*local%s+([%w_]+)%s*=%s*")
+		if var_name then
+			-- Add original line and capture value
+			modified_content = modified_content .. line .. "\n"
+			modified_content = modified_content .. string.format("_playground_output[%d] = %s\n", i, var_name)
+		-- Check if line is just a variable reference
+		elseif line:match("^%s*([%w_]+)%s*$") then
+			local ref_var = line:match("^%s*([%w_]+)%s*$")
+			modified_content = modified_content .. string.format("_playground_output[%d] = %s\n", i, ref_var)
+		-- Check if it's a return statement
+		elseif line:match("^%s*return%s+") then
+			modified_content = modified_content
+				.. string.format("_playground_output[%d] = %s\n", i, line:match("^%s*return%s+(.+)"))
+		else
+			modified_content = modified_content .. line .. "\n"
+		end
+	end
+
+	modified_content = modified_content .. "\nreturn _playground_output"
+
+	-- Execute the modified code and capture output
 	local success, result = pcall(function()
-		local func = loadstring(content)
+		local func = loadstring(modified_content)
 		if func then
 			return func()
 		end
-		return "No output"
+		return {}
 	end)
 
-	-- Prepare output content
-	local output
+	-- Prepare output lines
+	local output_lines = {}
+	for i = 1, #lines do
+		output_lines[i] = "" -- Initialize with empty lines
+	end
+
+	-- Fill in the output lines
 	if success then
-		if result == nil then
-			output = "nil"
-		else
-			output = vim.inspect(result)
+		for line_num, value in pairs(result) do
+			if value ~= nil then
+				output_lines[line_num] = vim.inspect(value)
+			end
 		end
 	else
-		output = "Error: " .. tostring(result)
+		output_lines[1] = "Error: " .. tostring(result)
 	end
 
 	-- Update output buffer
-	vim.api.nvim_buf_set_lines(M.windows.output_buf, 0, -1, false, vim.split(output, "\n"))
+	vim.api.nvim_buf_set_lines(M.windows.output_buf, 0, -1, false, output_lines)
 end
 
 return M
